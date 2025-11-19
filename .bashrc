@@ -6,7 +6,7 @@ source ~/.local/share/omarchy/default/bash/rc
 
 . "$HOME/.local/share/../bin/env"
 
-
+export PATH="/usr/bin:$PATH"
 alias vim='nvim'
 alias vi='nvim'
 

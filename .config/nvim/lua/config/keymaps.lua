@@ -4,8 +4,8 @@
 
 -- Leader key shortcuts for write and quit
 vim.keymap.set("n", "<leader>w", "<cmd>w<cr>", { desc = "Save file" })
-vim.keymap.set("n", "<leader>q", "<cmd>bd<cr>", { desc = "Close buffer" })
-vim.keymap.set("n", "<leader>Q", "<cmd>qa<cr>", { desc = "Quit window" })
+vim.keymap.set("n", "<leader>q", function() Snacks.bufdelete() end, { desc = "Delete buffer" })
+vim.keymap.set("n", "<leader>Q", "<cmd>qa<cr>", { desc = "Quit Neovim" })
 
 -- Comment toggle with Ctrl+/
 vim.keymap.set("n", "<C-/>", "gcc", { desc = "Toggle comment", remap = true })

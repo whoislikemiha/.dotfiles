@@ -1,0 +1,4 @@
+! option = symbols
+  custom:rshift_super = +custom(rshift_super)
+
+! include %S/evdev

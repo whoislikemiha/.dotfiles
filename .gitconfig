@@ -1,0 +1,13 @@
+[user]
+	name = Mihailo Bubnjevic
+  email = mihabubnjevic@gmail.com 
+
+# work repo
+[includeIf "gitdir:~/work/bizaway"]
+  path = ~/.gitconfig-work
+[credential "https://github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/usr/bin/gh auth git-credential

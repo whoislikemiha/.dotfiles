@@ -1,0 +1,13 @@
+session_name: example
+windows:
+  - window_name: editor
+    layout: main-vertical
+    panes:
+      - shell_command:
+          - cd ~/
+          - clear
+  - window_name: terminal
+    panes:
+      - shell_command:
+          - cd ~/
+          - clear

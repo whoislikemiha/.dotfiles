@@ -1,0 +1,12 @@
+session_name: ssh-server
+windows:
+  - window_name: main
+    panes:
+      - shell_command:
+          # Replace with your actual SSH command
+          - ssh user@hostname
+  - window_name: local
+    panes:
+      - shell_command:
+          - cd ~/
+          - clear

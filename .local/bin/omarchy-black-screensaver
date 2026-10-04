@@ -1,0 +1,46 @@
+#!/bin/bash
+# Black-screen "screensaver" for the ASUS XG32UCWMG OLED on DP-1.
+#
+# Why this exists: Hyprland's DPMS off fully disables the output (sysfs goes
+# enabled -> disabled), so the panel loses the DP stream, drops to standby, and
+# shows its input-detection banner on the way back. Re-acquiring a 4K@240 DSC
+# link costs ~15s. On an OLED a black surface is just as good for burn-in
+# (black pixels are off) while keeping the link up, so waking is instant.
+#
+# The black surface is a Quickshell layer-shell overlay on every screen, not a
+# terminal window. A fullscreen kitty window with the org.omarchy.screensaver
+# class used to be drawn here, but mapping it made Hyprland report activity:
+# hypridle fired on-resume ~25ms after on-timeout, closed it again, and restarted
+# its idle clock. The screen flashed black every 3 minutes, and the 15 min lock
+# and 20 min DPMS off never fired. An overlay maps without resetting idle.
+
+DIR="$HOME/.local/share/omarchy-black-screensaver"
+
+running() {
+  pgrep -xf "qs -p $DIR" >/dev/null
+}
+
+start() {
+  running && exit 0
+  # Never cover a lock screen that is already up.
+  [[ $(omarchy-shell lock isLocked 2>/dev/null) == "true" ]] && exit 0
+  setsid -f qs -p "$DIR" >/dev/null 2>&1
+  exit 0
+}
+
+stop() {
+  pkill -xf "qs -p $DIR"
+  # Backstop: never leave the user staring at a black screen.
+  for _ in $(seq 1 10); do
+    running || exit 0
+    read -rt 0.1 </dev/null 2>/dev/null || true
+  done
+  pkill -9 -xf "qs -p $DIR"
+  exit 0
+}
+
+case "$1" in
+start) start ;;
+stop) stop ;;
+*) echo "usage: ${0##*/} start|stop" >&2; exit 1 ;;
+esac

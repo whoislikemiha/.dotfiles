@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Safely merge upstream Hermes into the deployed miha integration branch.
+set -euo pipefail
+
+repo="${HERMES_REPO:-$HOME/.hermes/hermes-agent}"
+restart=0
+full=0
+
+usage() {
+  cat <<'EOF'
+Usage: hermes-update [--full] [--restart]
+
+Stages origin/main in a temporary worktree, tests it with the carried fork
+commits, then fast-forwards the live miha checkout. It never pushes.
+
+  --full     run the complete Python test suite instead of carried-patch tests
+  --restart  restart the gateway after deployment; use from a separate shell
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --full) full=1 ;;
+    --restart) restart=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+cd "$repo"
+branch="$(git branch --show-current)"
+if [[ "$branch" != "miha" ]]; then
+  echo "REFUSING: live checkout is on '$branch', not 'miha'." >&2
+  exit 1
+fi
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "REFUSING: live miha checkout is dirty." >&2
+  git status --short >&2
+  exit 1
+fi
+
+uv_bin="${UV_BIN:-$(command -v uv || true)}"
+if [[ -z "$uv_bin" && -x "$HOME/.local/bin/uv" ]]; then
+  uv_bin="$HOME/.local/bin/uv"
+fi
+[[ -n "$uv_bin" ]] || { echo "REFUSING: uv is required." >&2; exit 1; }
+git fetch origin --quiet
+
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/hermes-update"
+stage="$state_root/staging"
+stage_branch="update/miha-$$"
+mkdir -p "$state_root"
+if [[ -e "$stage" ]]; then
+  echo "REFUSING: stale staging path exists: $stage" >&2
+  exit 1
+fi
+
+cleanup() {
+  git -C "$repo" worktree remove --force "$stage" >/dev/null 2>&1 || true
+  git -C "$repo" branch -D "$stage_branch" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "==> Staging origin/main outside the live checkout"
+git worktree add --quiet "$stage" -b "$stage_branch" miha
+git -C "$stage" merge --no-edit origin/main
+
+if ((full)); then
+  tests=(python -m pytest -q)
+else
+  tests=(
+    python -m pytest -o addopts=
+    tests/test_external_events.py
+    tests/hermes_cli/test_events_publish.py
+    tests/gateway/test_external_events_session_env.py
+    tests/gateway/test_completion_delivery.py
+    tests/test_packaging_metadata.py::test_external_events_lives_in_a_shipped_package
+    -q --tb=short
+  )
+fi
+
+echo "==> Testing staged integration"
+(
+  cd "$stage"
+  "$uv_bin" run --isolated --extra dev --locked "${tests[@]}"
+  temp_home="$(mktemp -d)"
+  trap 'rm -rf "$temp_home"' EXIT
+  HERMES_HOME="$temp_home" "$uv_bin" run --isolated --extra dev --locked \
+    python -m hermes_cli.main --version >/dev/null
+)
+
+echo "==> Deploying tested integration to live miha"
+old_head="$(git rev-parse HEAD)"
+git merge --ff-only "$stage_branch"
+git branch -f main origin/main
+
+# Editable-install metadata can change even when runtime imports looked healthy.
+"$uv_bin" pip install --python venv/bin/python --no-deps -e .
+(
+  cd "${HERMES_HOME:-$HOME/.hermes}"
+  "$repo/venv/bin/python" -c \
+    'from gateway.external_events import MAX_PAYLOAD_BYTES; assert MAX_PAYLOAD_BYTES == 65536'
+  "$repo/venv/bin/hermes" --version >/dev/null
+)
+
+echo "==> Deployed $(git rev-parse --short HEAD) (was ${old_head:0:9})"
+echo "==> main mirrors $(git rev-parse --short origin/main); no push performed"
+
+if ((restart)); then
+  echo "==> Restarting gateway"
+  "$repo/venv/bin/hermes" gateway restart
+else
+  echo "==> Restart required: run 'hermes gateway restart' from a separate shell"
+fi

@@ -1,0 +1,22 @@
+
+session_name: Money
+windows:
+  - window_name: NeoVim
+    layout: main-vertical
+    panes:
+      - shell_command:
+          - cd ~/pro/money_intelligence/
+          # Uncomment to auto-start your editor
+          - nvim .
+      - shell_command:
+          - cd ~/pro/money_intelligence/
+          - claude --continue
+  - window_name: docker run
+    panes:
+      - shell_command:
+          - cd ~/pro/money_intelligence/
+          - docker compose -f docker-compose.dev.yml up --build
+  - window_name: console
+    panes:
+      - shell_command:
+          - cd ~/pro/money_intelligence/

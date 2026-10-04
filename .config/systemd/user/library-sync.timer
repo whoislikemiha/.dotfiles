@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync the shared Obsidian library every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Unit=library-sync.service
+
+[Install]
+WantedBy=timers.target

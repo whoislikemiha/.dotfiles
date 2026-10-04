@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""statrings — concentric-ring PC stats TUI.
+
+Rings outermost→innermost: RAM → per-core CPU → GPU → per-disk storage.
+Each ring fills from bottom (6 o'clock) clockwise. Color → red at 90%+.
+
+Usage: statrings [-r RADIUS] [-i INTERVAL] [--once]
+"""
+
+from __future__ import annotations
+import argparse, math, shutil, subprocess, sys, time
+from dataclasses import dataclass
+from typing import List, Optional
+
+try:
+    import psutil
+except ImportError:
+    print("psutil required: pip install psutil", file=sys.stderr)
+    sys.exit(1)
+
+def _c(name: str) -> str:
+    return {"cyan":"\033[96m","green":"\033[92m","magenta":"\033[95m",
+            "yellow":"\033[93m","red":"\033[91m","blue":"\033[94m",
+            "white":"\033[97m","dim":"\033[90m","bold":"\033[1m"}[name]
+
+R = "\033[0m"
+
+def _heat(pct: float, base: str) -> str:
+    return _c("red") if pct >= 90 else _c(base)
+
+@dataclass
+class Ring:
+    label: str
+    pct: float
+    color: str
+
+def collect() -> List[Ring]:
+    rings: List[Ring] = []
+    rings.append(Ring("RAM", psutil.virtual_memory().percent, "cyan"))
+    for i, pct in enumerate(psutil.cpu_percent(percpu=True)):
+        rings.append(Ring(f"C{i:02d}", pct, "green"))
+    gpu = _gpu()
+    if gpu is not None:
+        rings.append(Ring("GPU", gpu, "magenta"))
+    seen = set()
+    for p in psutil.disk_partitions(all=False):
+        if p.fstype in ("squashfs","tmpfs","devtmpfs","overlay"): continue
+        if p.device.startswith("/dev/loop") or p.device in seen: continue
+        seen.add(p.device)
+        try: u = psutil.disk_usage(p.mountpoint)
+        except PermissionError: continue
+        lbl = "root" if p.mountpoint == "/" else p.mountpoint.lstrip("/")
+        rings.append(Ring(lbl, u.percent, "yellow"))
+    return rings
+
+def _gpu() -> Optional[float]:
+    if not shutil.which("nvidia-smi"): return None
+    try:
+        r = subprocess.run(
+            ["nvidia-smi","--query-gpu=utilization.gpu","--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3)
+        if r.returncode != 0 or not r.stdout.strip(): return None
+        return float(r.stdout.strip().splitlines()[0])
+    except Exception: return None
+
+# ─── rendering ──────────────────────────────────────────────────────────
+
+def render(rings: List[Ring], max_r: int) -> str:
+    n = len(rings)
+    if n == 0: return ""
+
+    # Spacing between rings: 1 row. Outermost = max_r.
+    radii = [max(2, max_r - i) for i in range(n)]
+    actual_max = radii[0]
+    height = 2 * actual_max + 3
+    cols = 2 * actual_max + 2
+
+    # Dense grid: 2D array of strings, each 1 char + optional ANSI
+    # We store just the visible char + color, merging later.
+    # Key: (row, col) -> (char, color_name)
+    cells: dict[tuple[int,int], tuple[str,str]] = {}
+    cx = actual_max  # center in x-units (each = 2 chars)
+    cy = actual_max + 1  # center row
+
+    for idx, ring in enumerate(rings):
+        r = radii[idx]
+        fill_deg = (ring.pct / 100.0) * 360.0
+        hot = _heat(ring.pct, ring.color)
+
+        # Parametric: sample finely enough that every char cell on the
+        # circle is hit. Circumference ≈ 2πr, ×2 for aspect ratio.
+        steps = max(200, int(2 * math.pi * r * 2.5))
+
+        for i in range(steps):
+            deg = (i / steps) * 360.0
+            if deg >= fill_deg:
+                break
+            # Bottom = 0°, clockwise. In screen coords (y down):
+            # angle = 90° + deg (so 0° → bottom, 90° → right, 180° → top, 270° → left)
+            angle = math.radians(90.0 + deg)
+            sx = r * math.cos(angle)
+            sy = r * math.sin(angle)
+
+            # Convert to grid: x × 2 for aspect ratio
+            col = int(round(cx * 2 + sx * 2))
+            row = int(round(cy + sy))
+
+            if 0 <= row < height and 0 <= col < cols:
+                cells[(row, col)] = ("●", hot)
+
+            # Fill neighbor to reduce gaps: also set adjacent cell
+            col2 = col + 1 if sx > 0 else col - 1
+            if 0 <= row < height and 0 <= col2 < cols:
+                if (row, col2) not in cells:
+                    cells[(row, col2)] = ("●", hot)
+
+    # Center: RAM percentage
+    center_text = f"{rings[0].pct:.0f}%"
+    start_col = cx * 2 - len(center_text) + 1
+    for i, ch in enumerate(center_text):
+        c = start_col + i
+        if 0 <= c < cols:
+            cells[(cy, c)] = (ch, _c("bold"))
+
+    # Legend
+    legend: List[str] = []
+    for ring in rings:
+        hot = _heat(ring.pct, ring.color)
+        legend.append(f"  {hot}●{R} {ring.label:<8} {ring.pct:5.1f}%")
+
+    # Build lines
+    lines = [f"  {_c('bold')}statrings{R}  {_c('dim')}· {n} rings{R}", ""]
+    for row in range(height):
+        row_parts = []
+        for col in range(cols):
+            if (row, col) in cells:
+                ch, ansi = cells[(row, col)]
+                row_parts.append(f"{ansi}{ch}{R}")
+            else:
+                row_parts.append(" ")
+        row_str = "".join(row_parts)
+        leg = legend[row] if row < len(legend) else ""
+        lines.append(f"  {row_str}{leg}")
+
+    return "\n".join(lines)
+
+def _clear():
+    sys.stdout.write("\033[2J\033[H")
+    sys.stdout.flush()
+
+def run(radius: int, interval: float, once: bool):
+    psutil.cpu_percent(percpu=True)
+    if not once: time.sleep(min(interval, 0.5))
+    while True:
+        _clear()
+        sys.stdout.write(render(collect(), radius) + "\n")
+        sys.stdout.flush()
+        if once: break
+        time.sleep(interval)
+
+def main():
+    p = argparse.ArgumentParser(description="statrings — concentric-ring PC stats TUI")
+    p.add_argument("-r", "--radius", type=int, default=42, help="Max ring radius (default 42)")
+    p.add_argument("-i", "--interval", type=float, default=1.0, help="Refresh seconds (default 1)")
+    p.add_argument("--once", action="store_true", help="Print once and exit")
+    args = p.parse_args()
+    try: run(args.radius, args.interval, args.once)
+    except KeyboardInterrupt:
+        _clear(); print("statrings stopped."); sys.exit(0)
+
+if __name__ == "__main__":
+    main()

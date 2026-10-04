@@ -1,0 +1,8 @@
+// Right Shift becomes a second Super (Mod4) key.
+// The modifier_map Mod4 line replaces the Shift mapping <RTSH> inherits from
+// pc(pc105), so Right Shift no longer shifts at all.
+partial modifier_keys
+xkb_symbols "rshift_super" {
+    key <RTSH> { [ Super_R ] };
+    modifier_map Mod4 { <RTSH> };
+};

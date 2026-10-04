@@ -1,0 +1,14 @@
+[Unit]
+Description=Guarded Git sync for the shared Obsidian library
+Documentation=file://%h/Knowledge/AGENTS.md
+Wants=network-online.target
+After=network-online.target
+ConditionPathIsDirectory=%h/Knowledge/.git
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Knowledge
+ExecStart=/usr/bin/python3 %h/Knowledge/_Meta/scripts/sync_library.py --skip-import
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+IOSchedulingClass=idle
